@@ -6,6 +6,11 @@ All notable changes to this plugin are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- GitLab and self-hosted GitLab merge-request cards. GitLab remotes use `GITLAB_TOKEN`, show MR IID,
+  draft state, and latest pipeline status for checked-out branches, and share the existing review cache.
+
 ## [0.1.2] - 2026-09-30
 
 ### Added

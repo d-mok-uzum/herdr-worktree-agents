@@ -36,7 +36,7 @@ and its git status. Worktrees that need you sort to the top.
 |---|---|
 | First | `◆` this workspace's checkout, `◇` open in another workspace, `✗` prunable; branch; `✎` changed files, `↑`/`↓` commits ahead/behind the remote default branch |
 | Agents | One line per agent running in that checkout, most urgent first: state glyph (`◉` needs you, braille spinner working, `✓` done, `●` idle), **which coding agent** (`claude`, `codex`, `pi`, `opencode`, … or the pane's reported display name), and its terminal title. Up to 3 lines, then `+N more`. The first line also shows the age of the last commit |
-| Last | Open PR number, CI (`✓` / `✗N` failing checks / spinner running), unresolved review threads, `✔` approved or `±` changes requested, `draft` |
+| Last | Open PR/MR number, CI (`✓` / `✗N` failing checks / spinner running), unresolved review threads, `✔` approved or `±` changes requested, draft. GitLab rows currently omit review-thread and approval data. |
 
 `Tab` expands the selected card with the last commit subject, a diffstat bar, failing check names and
 the checkout path. The card's left bar and frame are red when an agent is waiting on you or CI failed,
@@ -61,7 +61,8 @@ panes with `platform_unsupported`.
 
 - herdr 0.9.1 or newer
 - `git`, `jq`
-- `gh`, signed in, for PR and CI data (optional; without it the PR line reads `no PR`)
+- `gh`, signed in, for GitHub PR and CI data (optional for GitLab projects)
+- `curl` for GitLab and self-hosted GitLab MR data
 - Rust (`cargo`) for the full panel. Without it the plugin installs a simpler bash panel, which needs
   bash 4+ (macOS: `brew install bash`)
 - A Nerd Font for the PR and comment icons, or set `WORKTREES_ICONS=plain`. Ghostty bundles the glyphs
@@ -145,6 +146,8 @@ cp config.env.example "$(herdr plugin config-dir minhtran.worktrees)/config.env"
 | `WORKTREES_PR_TTL` | `60` | Seconds between PR/CI refreshes |
 | `WORKTREES_GIT_EVERY` | `10` | Seconds between git scans |
 | `WORKTREES_GH` | `/usr/bin/gh`, else `gh` | GitHub CLI to use |
+| `GITLAB_TOKEN` | unset | Token for GitLab/self-hosted GitLab MR API; set it in `config.env` when Herdr service does not inherit shell variables |
+| `WORKTREES_GITLAB_API_URL` | `https://<remote-host>/api/v4` | Override GitLab API root for nonstandard deployments |
 | `WORKTREES_ICONS` | Nerd Font | `plain` for ASCII icons |
 
 Changes apply the next time a panel opens (toggle twice).
@@ -156,9 +159,10 @@ Changes apply the next time a panel opens (toggle twice).
   API that lists plugin panes, so each board names its pane `⎇ worktrees` and `panel.sh` finds boards
   by that label.
 - The board (`board/`, Rust + ratatui) polls three sources on separate threads: herdr (worktrees and
-  agent panes, every 1.5s), git (every `WORKTREES_GIT_EVERY`) and GitHub (one GraphQL query for all
-  open PRs, every `WORKTREES_PR_TTL`). The PR result is cached in the plugin state directory and shared
-  by every panel on the repo, so several open panels still make one GitHub call per interval.
+  agent panes, every 1.5s), git (every `WORKTREES_GIT_EVERY`) and review data (every
+  `WORKTREES_PR_TTL`). GitHub uses one `gh` GraphQL query for open PRs. GitLab derives its API root
+  from the remote, lists open MRs, then requests pipeline detail only for branches checked out locally.
+  Both results use a provider-specific cache in the plugin state directory shared by every panel.
 - `wt-board --status` is the one-shot command behind the tab-bar entry. It reads the same cache, prints
   nothing while the active tab shows the panel, and publishes `$wt_pr` workspace tokens.
 
@@ -182,7 +186,9 @@ Remove the keybinding from `config.toml` if you added one.
   toggle action to re-enable it.
 - A panel still runs old code after an update: toggle twice. After `herdr plugin unlink` + `link`,
   herdr forgets which panes belong to the plugin; the toggle action still closes them.
-- PR line always `no PR`: check `gh auth status`, or point `WORKTREES_GH` at a working `gh`.
+- PR/MR line always empty: for GitHub, check `gh auth status` or `WORKTREES_GH`; for GitLab, set
+  `GITLAB_TOKEN` in the plugin `config.env`, then toggle the panel twice. GitLab supports MR, draft,
+  and latest pipeline status; approval and unresolved-thread counts are intentionally not fetched.
 
 ## Development
 

@@ -10,7 +10,7 @@ Make Worktree Agents show an open review for the branch in each worktree when th
 - GitHub behavior remains the existing `gh` GraphQL collector.
 - GitLab repositories use GitLab REST API v4 with the host and project path derived from the selected Git remote.
 - GitLab authentication uses `GITLAB_TOKEN`. The plugin also loads it from its persistent `config.env`, so a Herdr service does not need to inherit an interactive shell environment.
-- GitLab collector lists open merge requests once per refresh interval, normalizes data into the existing cache/row format, and matches each worktree by source branch.
+- GitLab collector lists open merge requests once per refresh interval, requests detail only for MRs whose source branch is checked out locally to obtain `head_pipeline`, normalizes data into the existing cache/row format, and matches each worktree by source branch.
 - GitLab rows provide MR IID, web URL, draft status, and latest head-pipeline status. `o` opens the MR URL.
 - GitLab review approvals and unresolved-thread counts are not collected in this change; they require extra calls for every MR.
 
