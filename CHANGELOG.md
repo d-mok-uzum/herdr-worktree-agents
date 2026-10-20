@@ -8,8 +8,18 @@ All notable changes to this plugin are documented here. The format follows
 
 ### Fixed
 
-- Worktree Agents now keeps one panel in each repository's source workspace and closes duplicate
-  panels from linked worktree workspaces.
+- Worktree Agents now keeps one panel in every Git worktree workspace. Opening reserves and labels
+  the new pane immediately, so overlapping hooks cannot create duplicate right splits in one workspace.
+- The `toggle` action is idempotent: it always shows the current workspace board rather than closing
+  one opened by another invocation; from a non-Git workspace it reveals or reopens the last board.
+  Use `q` in the board to hide all boards.
+- Long branch names wrap inside their card instead of truncating at the border.
+- A manual panel resize is now saved and synchronized to every open worktree board; `WORKTREES_WIDTH`
+  remains the initial width.
+- The origin checkout remains first; linked worktrees are ordered by attention beneath it.
+- Expanded cards dynamically omit everything before `.herdr/worktrees/` in managed checkout paths.
+- Agent, terminal-session, and expanded-card commit-subject labels use a light-theme-safe dark gray
+  while status glyphs retain their semantic colors.
 
 ### Added
 

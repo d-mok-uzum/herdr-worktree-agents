@@ -23,7 +23,7 @@ board/                Rust board (ratatui)
   src/data.rs         background collectors: herdr, git, GitHub
   src/app.rs          state, row ranking, selection, animations, actions
   src/ui.rs           rendering
-  src/main.rs         event loop, keys, mouse, --status and --snapshot modes
+  src/main.rs         event loop, keys, mouse, persisted panel-width sync, --status and --snapshot modes
 board.sh              bash fallback board (fewer features, needs bash 4+)
 ```
 
@@ -36,14 +36,15 @@ cargo build --release --manifest-path board/Cargo.toml
 herdr plugin link "$PWD"
 ```
 
-`herdr plugin link` does not run the build step, so rebuild yourself after Rust changes, then toggle
-the panel twice to restart it.
+`herdr plugin link` does not run the build step, so rebuild yourself after Rust changes. Press `q`
+in any board to close all boards, then focus each worktree workspace (or invoke the toggle action)
+to start fresh board processes.
 
 - Editor settings come from `.editorconfig`; Rust formatting from `board/rustfmt.toml` (`cargo fmt`).
 - Script changes (`panel.sh`, `scripts/*`) apply on the next hook or action run.
 - Manifest changes need `herdr plugin unlink minhtran.worktrees` and `herdr plugin link "$PWD"`.
-  Relinking makes herdr forget which open panes belong to the plugin; the toggle action still
-  closes them.
+  Relinking makes herdr forget which open panes belong to the plugin; press `q` in a board to
+  close them before reopening fresh boards.
 
 ## Checks before a pull request
 

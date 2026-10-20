@@ -234,7 +234,8 @@ impl App {
             })
             .filter(|r| fuzzy(&self.filter, &r.branch))
             .collect();
-        rows.sort_by_key(Row::rank);
+        // The origin checkout is the stable home row; urgency orders linked worktrees beneath it.
+        rows.sort_by_key(|r| (r.linked, r.rank()));
 
         for r in &rows {
             let st = r.top_status().to_string();
@@ -467,12 +468,12 @@ mod tests {
     }
 
     #[test]
-    fn worktree_needing_you_sorts_above_failed_ci_and_busy_ones() {
+    fn primary_checkout_stays_first_above_blocked_linked_worktrees() {
         let mut a = app();
         a.apply(Msg::Pr(vec![PrInfo { b: "main".into(), n: 1, ci: "FAILURE".into(), ..Default::default() }], 1));
         a.apply(snap(vec![(FEAT, "blocked")]));
-        assert_eq!(a.rows[0].path, FEAT, "blocked agent first");
-        assert_eq!(a.rows[1].path, MAIN, "failed CI next");
+        assert_eq!(a.rows[0].path, MAIN, "the origin checkout is fixed at the top");
+        assert_eq!(a.rows[1].path, FEAT, "linked worktrees keep their attention order below it");
     }
 
     #[test]
@@ -492,7 +493,7 @@ mod tests {
         a.apply(snap(vec![]));
         a.selected = Some(MAIN.into());
         a.apply(snap(vec![(FEAT, "blocked")]));
-        assert_eq!(a.rows[0].path, FEAT);
+        assert_eq!(a.rows[0].path, MAIN);
         assert_eq!(a.selected.as_deref(), Some(MAIN));
     }
 

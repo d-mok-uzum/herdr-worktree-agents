@@ -1,10 +1,10 @@
 id = "minhtran.worktrees"
 name = "Worktree Agents"
-version = "0.1.3"
+version = "0.1.4"
 # Tested on 0.9.1: plugin panes with --direction, worktree.* events, startup hooks,
 # tab_bar_right command entries and workspace metadata tokens.
 min_herdr_version = "0.9.1"
-description = "One source-workspace panel per Git project: worktrees, agents, PR/CI and git status"
+description = "One panel per Git worktree workspace: agents, PR/CI and git status"
 platforms = ["linux", "macos"]
 
 # Builds the Rust board when cargo is present; otherwise exits 0 and the bash board is used,
@@ -21,8 +21,8 @@ command = ["sh", "-c", "exec sh \"$HERDR_PLUGIN_ROOT/scripts/launch.sh\""]
 
 [[actions]]
 id = "toggle"
-title = "Worktrees: toggle panel"
-description = "Hide the panel everywhere, or show one panel in the repository source workspace."
+title = "Worktrees: show panel"
+description = "Show one panel in the current worktree workspace."
 contexts = ["workspace", "pane"]
 command = ["bash", "panel.sh", "toggle"]
 
@@ -38,7 +38,7 @@ title = "Worktrees: remove tab-bar summary and sidebar PR row"
 description = "Remove the managed config block and clear published sidebar tokens. Run before uninstalling."
 command = ["bash", "scripts/statusbar.sh", "remove"]
 
-# Auto-open one panel in the source workspace of a focused Git project with 2+ worktrees.
+# Auto-open one panel in every focused Git worktree workspace with 2+ worktrees.
 [[startup]]
 command = ["bash", "panel.sh", "ensure"]
 

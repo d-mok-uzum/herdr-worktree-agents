@@ -137,11 +137,23 @@ fn run(term: &mut ratatui::DefaultTerminal, app: &mut App, rx: Receiver<Msg>) ->
             match event::read()? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => key(app, k),
                 Event::Mouse(m) => mouse(app, m),
+                Event::Resize(width, _) => sync_width(app, width),
                 _ => {}
             }
         }
     }
     Ok(())
+}
+
+/// A manual Herdr split resize reaches the board as a terminal resize. Persist it, then let the
+/// panel script apply that width to every open worktree board.
+fn sync_width(app: &App, width: u16) {
+    if width == 0 || app.plugin_root.is_empty() {
+        return;
+    }
+    let script = format!("{}/panel.sh", app.plugin_root);
+    let width = width.to_string();
+    let _ = data::run("bash", &[&script, "width", &width]);
 }
 
 fn key(app: &mut App, k: KeyEvent) {

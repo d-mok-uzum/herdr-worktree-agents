@@ -54,6 +54,24 @@ fn cut(s: &str, max: usize) -> String {
     format!("{keep}…")
 }
 
+fn wrap(s: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let mut lines = vec![String::new()];
+    let mut used = 0;
+    for ch in s.chars() {
+        let ch_width = Span::raw(ch.to_string()).width();
+        if used > 0 && used + ch_width > width {
+            lines.push(String::new());
+            used = 0;
+        }
+        lines.last_mut().expect("line exists").push(ch);
+        used += ch_width;
+    }
+    lines
+}
+
 fn rule(width: u16) -> Line<'static> {
     Line::from("─".repeat(width as usize)).fg(Color::DarkGray)
 }
@@ -164,15 +182,26 @@ fn card(app: &App, r: &Row, w: u16, sel: bool, hover: bool) -> Vec<Line<'static>
         right.push(format!("↓{}", g.behind).fg(c));
     }
     right.push(" ".into());
-    let room = (w as usize).saturating_sub(4 + right.iter().map(Span::width).sum::<usize>());
-    let mut name = Span::raw(cut(&r.branch, room));
+    // Reserve one cell for `spread`'s gap, then continue the complete branch below if needed.
+    let room = (w as usize).saturating_sub(5 + right.iter().map(Span::width).sum::<usize>());
+    let mut branch_style = Style::new();
     if sel {
-        name = name.bold();
+        branch_style = branch_style.add_modifier(Modifier::BOLD);
     }
     if hover {
-        name = name.underlined();
+        branch_style = branch_style.add_modifier(Modifier::UNDERLINED);
     }
-    let mut lines = vec![spread(vec![bar(), " ".into(), mark, " ".into(), name], right, w)];
+    let mut first = vec![bar(), " ".into(), mark, " ".into()];
+    let mut lines = Vec::new();
+    if Span::raw(r.branch.clone()).width() <= room {
+        first.push(Span::styled(r.branch.clone(), branch_style));
+    }
+    lines.push(spread(first, right, w));
+    if Span::raw(r.branch.clone()).width() > room {
+        for part in wrap(&r.branch, (w as usize).saturating_sub(4)) {
+            lines.push(Line::from(vec![bar(), "   ".into(), Span::styled(part, branch_style)]));
+        }
+    }
 
     // Agent lines: one per agent, most urgent first, each naming which coding agent it is.
     // The first line also carries the last-commit age.
@@ -237,15 +266,24 @@ fn agent_line(a: &crate::data::Agent, spin: &'static str, width: usize, bar: Spa
         "idle" => ("●", "", Style::new().fg(Color::Gray)),
         _ => ("○", "", Style::new().fg(Color::DarkGray)),
     };
-    let name_style = if a.status == "blocked" { style } else { Style::new().bold() };
-    let what = [state, a.title.as_str()].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join(" · ");
+    let name_style = Style::new().fg(Color::DarkGray).bold();
+    let label_style = Style::new().fg(Color::DarkGray);
     // bar + 3 spaces + glyph + space + name + " · " + 1 cell of breathing room before the right column.
     let room = width.saturating_sub(4 + 2 + a.name.chars().count() + 3 + 1);
     let mut spans =
         vec![bar, "   ".into(), Span::styled(format!("{glyph} "), style), Span::styled(a.name.clone(), name_style)];
-    if !what.is_empty() && room > 1 {
+    if (!state.is_empty() || !a.title.is_empty()) && room > 1 {
         spans.push(" · ".fg(Color::DarkGray));
-        spans.push(Span::styled(cut(&what, room), style));
+        if !state.is_empty() {
+            spans.push(Span::styled(state, style));
+        }
+        let title_room = room.saturating_sub(Span::raw(state).width() + if state.is_empty() { 0 } else { 3 });
+        if !a.title.is_empty() && title_room > 1 {
+            if !state.is_empty() {
+                spans.push(" · ".fg(Color::DarkGray));
+            }
+            spans.push(Span::styled(cut(&a.title, title_room), label_style));
+        }
     }
     spans
 }
@@ -255,7 +293,7 @@ fn details(app: &App, r: &Row, g: &crate::data::GitInfo, w: u16) -> Vec<Line<'st
     let pad = || Span::raw("    ");
     let mut out = vec![Line::from("")];
     if !g.subject.is_empty() {
-        out.push(Line::from(vec![pad(), format!("“{}”", cut(&g.subject, room - 2)).italic().fg(Color::Gray)]));
+        out.push(Line::from(vec![pad(), format!("“{}”", cut(&g.subject, room - 2)).italic().fg(Color::DarkGray)]));
     }
     if g.ahead > 0 {
         let total = (g.ins + g.del).max(1);
@@ -274,9 +312,19 @@ fn details(app: &App, r: &Row, g: &crate::data::GitInfo, w: u16) -> Vec<Line<'st
             out.push(Line::from(vec![pad(), format!("✗ {}", cut(&pr.fails.join(", "), room - 2)).fg(Color::Red)]));
         }
     }
-    let shown = r.path.strip_prefix(&app.root).map(|p| format!(".{p}")).unwrap_or_else(|| r.path.clone());
+    let shown = checkout_path(&r.path, &app.root);
     out.push(Line::from(vec![pad(), cut(&shown, room).fg(Color::DarkGray)]));
     out
+}
+
+fn checkout_path(path: &str, root: &str) -> String {
+    if let Some(relative) = path.strip_prefix(root) {
+        format!(".{relative}")
+    } else if let Some((_, relative)) = path.split_once("/.herdr/worktrees/") {
+        relative.to_string()
+    } else {
+        path.to_string()
+    }
 }
 
 fn list(f: &mut Frame, app: &mut App, area: Rect) {
@@ -420,12 +468,14 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+    use ratatui::style::Color;
     use ratatui::Terminal;
 
     use crate::app::App;
     use crate::data::{Agent, HerdrSnap, Msg, WtRaw};
 
-    fn render(agents: Vec<(&str, &str, &str)>) -> Vec<String> {
+    fn render_buffer(branch: &str, agents: Vec<(&str, &str, &str)>, width: u16) -> Buffer {
         let (tx, _rx) = channel();
         let kicks = (0..3).map(|_| channel().0).collect();
         let mut app = App::new(
@@ -447,7 +497,7 @@ mod tests {
             open_ws: None,
         };
         app.apply(Msg::Herdr(HerdrSnap {
-            worktrees: vec![wt("/repo", "main"), wt("/repo/.worktrees/feat", "feat")],
+            worktrees: vec![wt("/repo", "main"), wt("/repo/.worktrees/feat", branch)],
             agents: agents
                 .into_iter()
                 .map(|(name, status, title)| {
@@ -457,10 +507,24 @@ mod tests {
                 .collect(),
             error: None,
         }));
-        let Ok(mut term) = Terminal::new(TestBackend::new(38, 30));
+        let Ok(mut term) = Terminal::new(TestBackend::new(width, 30));
         let Ok(_) = term.draw(|f| super::render(f, &mut app));
-        let buf = term.backend().buffer().clone();
+        term.backend().buffer().clone()
+    }
+
+    fn render(agents: Vec<(&str, &str, &str)>) -> Vec<String> {
+        let buf = render_buffer("feat", agents, 38);
         (0..30).map(|y| (0..38).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect()
+    }
+
+    fn text_cell(buf: &Buffer, needle: &str) -> (u16, u16) {
+        for y in 0..buf.area.height {
+            let line: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+            if let Some(x) = line.find(needle) {
+                return (line[..x].chars().count() as u16, y);
+            }
+        }
+        panic!("{needle:?} not rendered")
     }
 
     #[test]
@@ -479,5 +543,38 @@ mod tests {
             render(vec![("claude", "idle", ""), ("codex", "idle", ""), ("pi", "idle", ""), ("opencode", "idle", "")]);
         assert!(lines.iter().any(|l| l.contains("+1 more")));
         assert!(!lines.iter().any(|l| l.contains("opencode")));
+    }
+
+    #[test]
+    fn long_branch_wraps_without_ellipsis_or_border_overflow() {
+        let branch = "feature/keep-every-character-inside-the-selected-card";
+        let buf = render_buffer(branch, Vec::new(), 20);
+        let text = (0..buf.area.height)
+            .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<String>();
+        let compact: String = text.chars().filter(|ch| !ch.is_whitespace() && *ch != '▌').collect();
+        assert!(compact.contains(branch));
+        assert!(!text.contains('…'));
+    }
+
+    #[test]
+    fn managed_worktree_path_omits_the_private_home_prefix() {
+        assert_eq!(
+            super::checkout_path(
+                "/any/home/.herdr/worktrees/qa-backend-tests/fix-wms-qacore-907-public-urls",
+                "/any/home/projects/qa-backend-tests",
+            ),
+            "qa-backend-tests/fix-wms-qacore-907-public-urls"
+        );
+    }
+
+    #[test]
+    fn agent_and_session_labels_are_dark_gray_but_the_glyph_keeps_its_status_color() {
+        let buf = render_buffer("feat", vec![("claude", "working", "session title")], 38);
+        let (name_x, name_y) = text_cell(&buf, "claude");
+        let (title_x, title_y) = text_cell(&buf, "session title");
+        assert_eq!(buf[(name_x, name_y)].fg, Color::DarkGray);
+        assert_eq!(buf[(title_x, title_y)].fg, Color::DarkGray);
+        assert_eq!(buf[(name_x - 2, name_y)].fg, Color::Yellow);
     }
 }

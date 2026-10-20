@@ -2,7 +2,7 @@
 
 A [herdr](https://herdr.dev) plugin that keeps a panel in the top-right corner listing every git
 worktree of the current project, with the state of the agents running in each one, its PR and CI,
-and its git status. Worktrees that need you sort to the top.
+and its git status. The origin checkout stays first; linked worktrees that need you sort beneath it.
 
 ![The Worktrees panel in a repo with three worktrees](docs/screenshots/panel.png)
 
@@ -34,12 +34,12 @@ and its git status. Worktrees that need you sort to the top.
 
 | Line | Content |
 |---|---|
-| First | `◆` this workspace's checkout, `◇` open in another workspace, `✗` prunable; branch; `✎` changed files, `↑`/`↓` commits ahead/behind the remote default branch |
-| Agents | One line per agent running in that checkout, most urgent first: state glyph (`◉` needs you, braille spinner working, `✓` done, `●` idle), **which coding agent** (`claude`, `codex`, `pi`, `opencode`, … or the pane's reported display name), and its terminal title. Up to 3 lines, then `+N more`. The first line also shows the age of the last commit |
+| First | `◆` this workspace's checkout, `◇` open in another workspace, `✗` prunable; branch; `✎` changed files, `↑`/`↓` commits ahead/behind the remote default branch. Branch names continue on indented lines when necessary; no branch characters are truncated at the card border. |
+| Agents | One line per agent running in that checkout, most urgent first: state glyph (`◉` needs you, braille spinner working, `✓` done, `●` idle), **which coding agent** (`claude`, `codex`, `pi`, `opencode`, … or the pane's reported display name), and its terminal title. Labels use a theme-safe muted color while state glyphs and `needs you` retain their status color. Up to 3 lines, then `+N more`. The first line also shows the age of the last commit |
 | Last | Open PR/MR number, CI (`✓` / `✗N` failing checks / spinner running), unresolved review threads, `✔` approved or `±` changes requested, draft. GitLab rows currently omit review-thread and approval data. |
 
 `Tab` expands the selected card with the last commit subject, a diffstat bar, failing check names and
-the checkout path. The card's left bar and frame are red when an agent is waiting on you or CI failed,
+the checkout path. Managed worktree paths omit everything before `.herdr/worktrees/`. The card's left bar and frame are red when an agent is waiting on you or CI failed,
 yellow while working, green when done. A card pulses when its agent starts waiting on you, and cards
 slide into place when the order changes.
 
@@ -82,20 +82,23 @@ cargo build --release --manifest-path board/Cargo.toml
 herdr plugin link "$PWD"
 ```
 
-The panel opens by itself in the repository's source workspace when any workspace for that repo is focused and the repo has two or more checkouts. Linked worktree workspaces share this one panel instead of receiving duplicate right splits.
+The panel opens by itself in each focused Git worktree workspace when its repository has two or more checkouts. Each workspace gets its own right-side panel.
 
 ### Keybinding
 
-Plugins cannot declare keys. Add one to `~/.config/herdr/config.toml`, then run
-`herdr server reload-config`:
+Plugins cannot declare keys. Add this block (without replacing existing configuration) to
+`~/.config/herdr/config.toml`, then run `herdr server reload-config`:
 
 ```toml
 [[keys.command]]
-key = "prefix+w"
+key = "ctrl+alt+w"
 type = "plugin_action"
 command = "minhtran.worktrees.toggle"
-description = "worktrees panel"
+description = "show worktrees"
 ```
+
+`prefix+w` is intentionally not used: Herdr reserves it for workspace navigation. The default
+prefix is `ctrl+b` (press and release it, then the next key).
 
 ### Tab-bar summary and sidebar PR row (optional)
 
@@ -127,7 +130,7 @@ already has its own `[ui]` section the action stops and prints the snippet to me
 | `r` | Refresh now |
 | `q` | Hide the panel everywhere and stop auto-opening |
 
-The `toggle` action hides every panel when one is open; otherwise it re-enables auto-open and opens one panel in the repository's source workspace, even in a single-checkout repo.
+The `toggle` action is idempotent: it enables and shows the current workspace's board, even in a single-checkout repo. From a non-Git workspace, it reveals an already-open board or reopens the last worktree board. Use `q` in a board to hide every board and disable auto-open.
 
 ## Configuration
 
@@ -139,7 +142,7 @@ cp config.env.example "$(herdr plugin config-dir minhtran.worktrees)/config.env"
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `WORKTREES_WIDTH` | `38` | Panel width in columns |
+| `WORKTREES_WIDTH` | `38` | Initial panel width in columns; a manual resize is saved and synchronized to every board |
 | `WORKTREES_MIN` | `2` | Auto-open only in repos with at least this many checkouts |
 | `WORKTREES_PR_TTL` | `60` | Seconds between PR/CI refreshes |
 | `WORKTREES_GIT_EVERY` | `10` | Seconds between git scans |
@@ -148,15 +151,14 @@ cp config.env.example "$(herdr plugin config-dir minhtran.worktrees)/config.env"
 | `WORKTREES_GITLAB_API_URL` | `https://<remote-host>/api/v4` | Override GitLab API root for nonstandard deployments |
 | `WORKTREES_ICONS` | Nerd Font | `plain` for ASCII icons |
 
-Changes apply the next time a panel opens (toggle twice).
+`WORKTREES_WIDTH` supplies the initial width for new boards. A manual panel resize becomes the saved width for every open board.
 
 ## How it works
 
 - `panel.sh` runs on the `startup`, `workspace.focused` and `worktree.created` hooks. It opens one
-  `board` pane in the repository's source workspace as a right split of its top-right pane, then narrows
-  it to `WORKTREES_WIDTH`. Linked worktree workspaces share that board; stale linked-worktree boards are
-  closed. Herdr has no API that lists plugin panes, so each board names its pane `⎇ worktrees` and
-  `panel.sh` finds boards by that label.
+  `board` pane in each focused Git worktree workspace as a right split of its top-right pane. A manual
+  resize is saved and propagated to every open board. Herdr has no API that lists plugin panes, so each board names its pane
+  `⎇ worktrees` and `panel.sh` finds boards by that label.
 - The board (`board/`, Rust + ratatui) polls three sources on separate threads: herdr (worktrees and
   agent panes, every 1.5s), git (every `WORKTREES_GIT_EVERY`) and review data (every
   `WORKTREES_PR_TTL`). GitHub uses one `gh` GraphQL query for open PRs. GitLab derives its API root
@@ -165,8 +167,8 @@ Changes apply the next time a panel opens (toggle twice).
 - `wt-board --status` is the one-shot command behind the tab-bar entry. It reads the same cache, prints
   nothing while the active tab shows the panel, and publishes `$wt_pr` workspace tokens.
 
-State (the `disabled` flag, the PR cache, published sidebar tokens) lives in the plugin state
-directory, `$HERDR_PLUGIN_STATE_DIR` (on Linux `~/.local/state/herdr/plugins/minhtran.worktrees`).
+State (the `disabled` flag, saved panel width, PR cache, published sidebar tokens) lives in the plugin
+state directory, `$HERDR_PLUGIN_STATE_DIR` (on Linux `~/.local/state/herdr/plugins/minhtran.worktrees`).
 Nothing is written to the plugin checkout.
 
 ## Uninstall
@@ -183,11 +185,12 @@ Remove the keybinding from `config.toml` if you added one.
 - Hook and action output: `herdr plugin log list --plugin minhtran.worktrees`
 - The panel never opens: the repo needs `WORKTREES_MIN` checkouts, or you hid it with `q`. Run the
   toggle action to re-enable it.
-- A panel still runs old code after an update: toggle twice. After `herdr plugin unlink` + `link`,
-  herdr forgets which panes belong to the plugin; the toggle action still closes them.
+- A panel still runs old code after a Rust update: press `q` in any board to close all boards, then
+  focus each worktree workspace (or invoke the toggle action there) to open fresh boards. After
+  `herdr plugin unlink` + `link`, close any stale panes the same way before reopening them.
 - PR/MR line always empty: for GitHub, check `gh auth status` or `WORKTREES_GH`; for GitLab, set
-  `GITLAB_TOKEN` in the plugin `config.env`, then toggle the panel twice. GitLab supports MR, draft,
-  and latest pipeline status; approval and unresolved-thread counts are intentionally not fetched.
+  `GITLAB_TOKEN` in the plugin `config.env`, then press `q` and reopen the board. GitLab supports MR,
+  draft, and latest pipeline status; approval and unresolved-thread counts are intentionally not fetched.
 
 ## Development
 
