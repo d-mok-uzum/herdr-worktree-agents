@@ -6,6 +6,11 @@ All notable changes to this plugin are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Worktree Agents now keeps one panel in each repository's source workspace and closes duplicate
+  panels from linked worktree workspaces.
+
 ### Added
 
 - GitLab and self-hosted GitLab merge-request cards. GitLab remotes use `GITLAB_TOKEN`, show MR IID,

@@ -82,7 +82,7 @@ cargo build --release --manifest-path board/Cargo.toml
 herdr plugin link "$PWD"
 ```
 
-The panel opens by itself the next time you focus a workspace whose repo has two or more checkouts.
+The panel opens by itself in the repository's source workspace when any workspace for that repo is focused and the repo has two or more checkouts. Linked worktree workspaces share this one panel instead of receiving duplicate right splits.
 
 ### Keybinding
 
@@ -127,8 +127,7 @@ already has its own `[ui]` section the action stops and prints the snippet to me
 | `r` | Refresh now |
 | `q` | Hide the panel everywhere and stop auto-opening |
 
-The `toggle` action hides the panel everywhere when the active tab shows it; otherwise it re-enables
-auto-open and opens it in the active tab, even in a single-checkout repo.
+The `toggle` action hides every panel when one is open; otherwise it re-enables auto-open and opens one panel in the repository's source workspace, even in a single-checkout repo.
 
 ## Configuration
 
@@ -153,10 +152,11 @@ Changes apply the next time a panel opens (toggle twice).
 
 ## How it works
 
-- `panel.sh` runs on the `startup`, `workspace.focused` and `worktree.created` hooks. It opens the
-  `board` pane as a right split of the top-right pane and narrows it to `WORKTREES_WIDTH`. herdr has no
-  API that lists plugin panes, so each board names its pane `⎇ worktrees` and `panel.sh` finds boards
-  by that label.
+- `panel.sh` runs on the `startup`, `workspace.focused` and `worktree.created` hooks. It opens one
+  `board` pane in the repository's source workspace as a right split of its top-right pane, then narrows
+  it to `WORKTREES_WIDTH`. Linked worktree workspaces share that board; stale linked-worktree boards are
+  closed. Herdr has no API that lists plugin panes, so each board names its pane `⎇ worktrees` and
+  `panel.sh` finds boards by that label.
 - The board (`board/`, Rust + ratatui) polls three sources on separate threads: herdr (worktrees and
   agent panes, every 1.5s), git (every `WORKTREES_GIT_EVERY`) and review data (every
   `WORKTREES_PR_TTL`). GitHub uses one `gh` GraphQL query for open PRs. GitLab derives its API root

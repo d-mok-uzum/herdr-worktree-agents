@@ -18,8 +18,9 @@ WIDTH=${WORKTREES_WIDTH:-38}
 MIN=${WORKTREES_MIN:-2}
 
 # Herdr has no "list plugin panes" API, so the board labels its own pane.
+# Output: "<tab_id> <pane_id> <workspace_id>".
 board_panes() {
-  "$H" pane list | jq -r --arg l "$LABEL" '.result.panes[] | select(.label == $l) | "\(.tab_id) \(.pane_id)"'
+  "$H" pane list | jq -r --arg l "$LABEL" '.result.panes[] | select(.label == $l) | "\(.tab_id) \(.pane_id) \(.workspace_id)"'
 }
 
 # "<workspace_id> <active_tab_id>" of the focused workspace.
@@ -27,11 +28,31 @@ active() {
   "$H" workspace list | jq -r '.result.workspaces[] | select(.focused) | "\(.workspace_id) \(.active_tab_id)"'
 }
 
+source_workspace() {
+  "$H" worktree list --workspace "$1" 2>/dev/null \
+    | jq -er '.result.source.source_workspace_id // empty'
+}
+
+workspace_tab() {
+  "$H" workspace list | jq -er --arg ws "$1" \
+    '.result.workspaces[] | select(.workspace_id == $ws) | .active_tab_id'
+}
+
 # Non-git workspaces make worktree list fail; single-checkout repos are not worth a panel.
 has_worktrees() {
   local n
   n=$("$H" worktree list --workspace "$1" 2>/dev/null | jq '.result.worktrees | length') || return 1
   (( n >= MIN ))
+}
+
+# One board belongs to the source workspace for each repository.  Linked worktree workspaces
+# share that board instead of each receiving a duplicate right split.
+close_linked_boards() {
+  local _tab id ws source
+  board_panes | while read -r _tab id ws; do
+    source=$(source_workspace "$ws") || continue
+    [ "$ws" = "$source" ] || "$H" plugin pane close "$id" >/dev/null 2>&1 || "$H" pane close "$id" >/dev/null 2>&1 || true
+  done
 }
 
 open_in_tab() {
@@ -62,19 +83,21 @@ shrink() {
 
 close_all() {
   # Re-linking the plugin drops herdr's ownership record, so fall back to a plain pane close.
-  board_panes | while read -r _ id; do
+  board_panes | while read -r _ id _ws; do
     "$H" plugin pane close "$id" >/dev/null 2>&1 || "$H" pane close "$id" >/dev/null 2>&1 || true
   done
 }
 
 # $1 = force: skip the worktree-count check (explicit toggle on).
 ensure() {
-  local force=${1:-} ws tab
+  local force=${1:-} ws tab source
   [ -f "$OFF" ] && return 0
   read -r ws tab < <(active) || return 0
-  [ -n "$tab" ] || return 0
+  source=$(source_workspace "$ws") || return 0
+  close_linked_boards
+  tab=$(workspace_tab "$source") || return 0
   board_panes | awk '{print $1}' | grep -qxF "$tab" && return 0
-  [ -n "$force" ] || has_worktrees "$ws" || return 0
+  [ -n "$force" ] || has_worktrees "$source" || return 0
   open_in_tab "$tab"
 }
 
@@ -90,8 +113,8 @@ fi
 
 case ${1:-} in
   toggle)
-    read -r _ tab < <(active) || true
-    if board_panes | awk '{print $1}' | grep -qxF "${tab:-}"; then touch "$OFF"; close_all
+    # The board is repository-scoped, so toggle every instance from any worktree workspace.
+    if [ -n "$(board_panes)" ]; then touch "$OFF"; close_all
     else rm -f "$OFF"; ensure force; fi ;;
   ensure) ensure ;;
   off) touch "$OFF"; close_all ;;
