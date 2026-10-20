@@ -58,7 +58,7 @@ fn setup() -> (App, Receiver<Msg>) {
         .split_once('/')
         .and_then(|(remote, _)| data::run("git", &["-C", &root, "remote", "get-url", remote]))
         .unwrap_or_default();
-    let slug = github_slug(url.trim());
+    let forge = data::forge(url.trim());
 
     let (tx, rx) = mpsc::channel();
     let paths = Arc::new(Mutex::new(Vec::new()));
@@ -70,27 +70,31 @@ fn setup() -> (App, Receiver<Msg>) {
     };
     data::spawn_herdr(ws.clone(), tx.clone(), kick());
     data::spawn_git(paths.clone(), base.clone(), tx.clone(), kick());
-    if let Some(slug) = slug {
-        let state = PathBuf::from(env("HERDR_PLUGIN_STATE_DIR"));
-        let cache = state.join(format!("prs-{}.json", slug.replace('/', "_")));
-        let gh = std::env::var("WORKTREES_GH").ok().unwrap_or_else(|| {
-            // Bare `gh` may resolve to a pyenv shim that rejects --jq.
-            if std::path::Path::new("/usr/bin/gh").exists() {
-                "/usr/bin/gh".into()
-            } else {
-                "gh".into()
+    if let Some(forge) = forge {
+        let cache = PathBuf::from(env("HERDR_PLUGIN_STATE_DIR")).join(data::cache_name(&forge));
+        match forge {
+            data::Forge::Github { slug } => {
+                let gh = std::env::var("WORKTREES_GH").ok().unwrap_or_else(|| {
+                    // Bare `gh` may resolve to a pyenv shim that rejects --jq.
+                    if std::path::Path::new("/usr/bin/gh").exists() {
+                        "/usr/bin/gh".into()
+                    } else {
+                        "gh".into()
+                    }
+                });
+                data::spawn_github_pr(slug, cache, gh, tx.clone(), kick());
             }
-        });
-        data::spawn_pr(slug, cache, gh, tx.clone(), kick());
+            data::Forge::Gitlab { host, project } => {
+                if let Some(token) = std::env::var("GITLAB_TOKEN").ok().filter(|token| !token.is_empty()) {
+                    let api_base =
+                        std::env::var("WORKTREES_GITLAB_API_URL").unwrap_or_else(|_| format!("https://{host}/api/v4"));
+                    data::spawn_gitlab_mr(api_base, project, token, root.clone(), cache, tx.clone(), kick());
+                }
+            }
+        }
     }
     let app = App::new(ws, here, repo, root, base, env("HERDR_PLUGIN_ROOT"), paths, tx, kicks);
     (app, rx)
-}
-
-fn github_slug(url: &str) -> Option<String> {
-    let rest = url.split_once("github.com")?.1.trim_start_matches([':', '/']);
-    let slug = rest.trim_end_matches('/').trim_end_matches(".git");
-    (slug.split('/').count() == 2).then(|| slug.to_string())
 }
 
 fn main() -> std::io::Result<()> {
@@ -249,8 +253,8 @@ fn status(state: Option<String>) -> std::io::Result<()> {
             data::run("git", &["-C", &root, "remote", "get-url", first.lines().next()?])
         })
         .unwrap_or_default();
-    let prs: Vec<data::PrInfo> = github_slug(url.trim())
-        .and_then(|slug| std::fs::read_to_string(state.join(format!("prs-{}.json", slug.replace('/', "_")))).ok())
+    let prs: Vec<data::PrInfo> = data::forge(url.trim())
+        .and_then(|forge| std::fs::read_to_string(state.join(data::cache_name(&forge))).ok())
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default();
 
@@ -373,16 +377,4 @@ fn snapshot(size: &str) -> std::io::Result<()> {
         writeln!(out, "{}", line.trim_end())?;
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::github_slug;
-
-    #[test]
-    fn slug_from_ssh_and_https_remotes() {
-        assert_eq!(github_slug("git@github.com:getedgeful/edgeful-app.git").as_deref(), Some("getedgeful/edgeful-app"));
-        assert_eq!(github_slug("https://github.com/o/r").as_deref(), Some("o/r"));
-        assert_eq!(github_slug("git@gitlab.com:o/r.git"), None);
-    }
 }

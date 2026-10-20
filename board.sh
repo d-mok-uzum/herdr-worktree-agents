@@ -26,15 +26,15 @@ R=$'\e[0m' DIM=$'\e[2m' B=$'\e[1m' RED=$'\e[31m' GRN=$'\e[32m' YEL=$'\e[33m' MAG
 SPIN=(◐ ◓ ◑ ◒)
 US=$'\x1f'   # field separator: unlike tab, IFS never collapses empty fields around it
 
-repo="" root="" base="" slug="" cache=/dev/null
+repo="" root="" base="" provider="" slug="" host="" project="" cache=/dev/null
 rows=()          # path, branch, state, agent_status, agent, agent_count, pr, ci, threads (US-separated)
 declare -A GIT   # path -> "dirty ahead behind commit_epoch"
 sel_path=""
 tick=0
 
-# Resolve repo, compare base (<remote>/HEAD) and GitHub slug once.
+# Resolve repo, compare base (<remote>/HEAD), and select GitHub or self-hosted GitLab once.
 init_repo() {
-  local json r url
+  local json r url key
   json=$("$H" worktree list --workspace "$WS" 2>/dev/null) || return 1
   repo=$(jq -r '.result.source.repo_name' <<<"$json")
   root=$(jq -r '.result.source.repo_root' <<<"$json")
@@ -43,28 +43,69 @@ init_repo() {
   done
   [ -n "$base" ] || base=main
   url=$(git -C "$root" remote get-url "${base%%/*}" 2>/dev/null || true)
-  [[ $url =~ github\.com[:/]([^/]+/[^/]+)$ ]] && slug=${BASH_REMATCH[1]%.git}
-  [ -n "$slug" ] && cache=$STATE/prs-${slug//\//_}.json
+  if [[ $url =~ github\.com[:/]([^/]+/[^/]+)$ ]]; then
+    provider=github
+    slug=${BASH_REMATCH[1]%.git}
+    key="github-$slug"
+  elif [[ $url =~ ^git@([^:]+):(.+)$ ]]; then
+    provider=gitlab
+    host=${BASH_REMATCH[1]}
+    project=${BASH_REMATCH[2]%.git}
+    key="gitlab-$host-$project"
+  elif [[ $url =~ ^https?://([^/]+)/(.+)$ ]]; then
+    provider=gitlab
+    host=${BASH_REMATCH[1]}
+    project=${BASH_REMATCH[2]%.git}
+    key="gitlab-$host-$project"
+  fi
+  [ -n "$provider" ] && cache="$STATE/reviews-$(printf '%s' "$key" | tr -c '[:alnum:]-' '_').json"
 }
 
-# One GraphQL call covers PR number, CI rollup and unresolved threads for every open PR.
-# The cache is shared by every board on this repo; touching it claims the refresh slot.
+# Fetch reviews into the shared normalized cache. A failed request never replaces valid data.
 pr_fetch() {
-  [ -n "$slug" ] || return 0
+  [ -n "$provider" ] || return 0
   # `date -r FILE` reads the mtime on both GNU and BSD date.
   if [ -f "$cache" ] && (( $(date +%s) - $(date -r "$cache" +%s) < PR_TTL )); then return 0; fi
-  touch "$cache"
   (
-    out=$($TIMEOUT "$GH" api graphql -F owner="${slug%%/*}" -F name="${slug#*/}" -f query='
-      query($owner:String!,$name:String!){repository(owner:$owner,name:$name){
-        pullRequests(states:OPEN,first:100,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{
-          number headRefName
-          reviewThreads(first:100){nodes{isResolved}}
-          commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}' \
-      --jq '[.data.repository.pullRequests.nodes[] | {b: .headRefName, n: .number,
-             ci: (.commits.nodes[0].commit.statusCheckRollup.state // ""),
-             t: ([.reviewThreads.nodes[] | select(.isResolved | not)] | length)}]') &&
-      printf '%s' "$out" >"$cache.tmp.$$" && mv "$cache.tmp.$$" "$cache"
+    case $provider in
+      github)
+        out=$($TIMEOUT "$GH" api graphql -F owner="${slug%%/*}" -F name="${slug#*/}" -f query='
+          query($owner:String!,$name:String!){repository(owner:$owner,name:$name){
+            pullRequests(states:OPEN,first:100,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{
+              number headRefName
+              reviewThreads(first:100){nodes{isResolved}}
+              commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}' \
+          --jq '[.data.repository.pullRequests.nodes[] | {b: .headRefName, n: .number,
+                 ci: (.commits.nodes[0].commit.statusCheckRollup.state // ""),
+                 t: ([.reviewThreads.nodes[] | select(.isResolved | not)] | length)}]') || exit 0
+        ;;
+      gitlab)
+        [ -n "${GITLAB_TOKEN:-}" ] || exit 0
+        api=${WORKTREES_GITLAB_API_URL:-"https://$host/api/v4"}
+        project_url=${project//\//%2F}
+        endpoint="${api%/}/projects/${project_url}/merge_requests?state=opened&scope=all&per_page=100"
+        mrs=$(printf 'header = "PRIVATE-TOKEN: %s"\n' "$GITLAB_TOKEN" |
+          $TIMEOUT curl --fail --silent --show-error --config - --url "$endpoint") || exit 0
+        branches=$(git -C "$root" worktree list --porcelain 2>/dev/null |
+          awk '/^branch refs\/heads\// {sub(/^branch refs\/heads\//, ""); print}' | jq -R . | jq -s .)
+        details=""
+        while IFS= read -r mr; do
+          iid=$(jq -r '.iid' <<<"$mr")
+          detail=$(printf 'header = "PRIVATE-TOKEN: %s"\n' "$GITLAB_TOKEN" |
+            $TIMEOUT curl --fail --silent --show-error --config - --url "${api%/}/projects/${project_url}/merge_requests/${iid}") || continue
+          details+="$detail"$'\n'
+        done < <(jq -c --argjson branches "$branches" '.[] | select(.source_branch as $b | $branches | index($b))' <<<"$mrs")
+        out=$(jq -s --argjson mrs "$mrs" '
+          (map({key: (.iid | tostring), value: (.head_pipeline.status // "")}) | from_entries) as $pipelines
+          | [$mrs[] | {b: .source_branch, n: .iid, url: .web_url,
+             draft: (.draft or .work_in_progress),
+             ci: (($pipelines[(.iid | tostring)] // "") as $s | if $s == "success" then "SUCCESS"
+                  elif $s == "failed" or $s == "canceled" or $s == "cancelled" or $s == "skipped" or $s == "manual" then "FAILURE"
+                  elif ["created", "waiting_for_resource", "preparing", "pending", "running", "scheduled"] | index($s) then "PENDING"
+                  else "" end), t: 0}]' <<<"$details") || exit 0
+        ;;
+    esac
+    printf '%s' "$out" >"$cache.tmp.$$" && mv "$cache.tmp.$$" "$cache"
   ) >/dev/null 2>&1 &
 }
 
@@ -221,7 +262,7 @@ while true; do
       k|$'\e[A') move -1 ;;
       j|$'\e[B') move 1 ;;
       '') activate; load ;;
-      r) [ -n "$slug" ] && rm -f "$cache"; pr_fetch; load; git_scan ;;
+      r) [ -n "$provider" ] && rm -f "$cache"; pr_fetch; load; git_scan ;;
       q) bash "$HERDR_PLUGIN_ROOT/panel.sh" off; exit 0 ;;
     esac
   else
