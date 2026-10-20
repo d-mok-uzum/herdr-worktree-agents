@@ -206,7 +206,6 @@ fn key(app: &mut App, k: KeyEvent) {
                 Some(_) => app.flash("main checkout can't be removed", false),
                 None => {}
             },
-            KeyCode::Char('c') => app.claude(),
             KeyCode::Char('o') => app.open_pr(),
             KeyCode::Char('y') => app.yank(),
             KeyCode::Char('q') => app.hide(),

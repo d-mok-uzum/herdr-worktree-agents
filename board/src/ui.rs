@@ -401,7 +401,6 @@ fn footer(app: &App, w: u16) -> Vec<Line<'static>> {
                     ("⇥", "info"),
                     ("n", "new"),
                     ("d", "del"),
-                    ("c", "claude"),
                     ("o", "PR"),
                     ("y", "copy"),
                     ("/", "find"),

@@ -11,6 +11,10 @@ All notable changes to this plugin are documented here. The format follows
 - GitLab and self-hosted GitLab merge-request cards. GitLab remotes use `GITLAB_TOKEN`, show MR IID,
   draft state, and latest pipeline status for checked-out branches, and share the existing review cache.
 
+### Removed
+
+- `c` shortcut that opened a worktree and started Claude in a new pane.
+
 ## [0.1.2] - 2026-09-30
 
 ### Added

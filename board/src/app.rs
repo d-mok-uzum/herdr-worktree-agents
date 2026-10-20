@@ -333,29 +333,6 @@ impl App {
         });
     }
 
-    pub fn claude(&mut self) {
-        let Some(r) = self.selected_row() else { return };
-        let (ws, path, branch) = (self.ws.clone(), r.path.clone(), r.branch.clone());
-        self.background(move || {
-            let out = herdr(&["worktree", "open", "--workspace", &ws, "--path", &path, "--focus"])?;
-            let v: serde_json::Value = serde_json::from_str(&out).map_err(|e| e.to_string())?;
-            let target_ws = v["result"]["workspace"]["workspace_id"].as_str().unwrap_or_default().to_string();
-            let pane = v["result"]["root_pane"]["pane_id"].as_str().map(String::from).or_else(|| {
-                let panes = data::herdr_json(&["pane", "list"])?;
-                panes["result"]["panes"].as_array()?.iter().find_map(|p| {
-                    (p["workspace_id"] == target_ws.as_str() && p["label"] != crate::LABEL)
-                        .then(|| p["pane_id"].as_str().map(String::from))
-                        .flatten()
-                })
-            });
-            let pane = pane.ok_or("no pane to split")?;
-            let split = herdr(&["pane", "split", &pane, "--direction", "down", "--focus"])?;
-            let v: serde_json::Value = serde_json::from_str(&split).map_err(|e| e.to_string())?;
-            let new = v["result"]["pane"]["pane_id"].as_str().ok_or("split returned no pane")?;
-            herdr(&["pane", "run", new, "claude"]).map(|_| format!("claude started in {branch}"))
-        });
-    }
-
     pub fn open_pr(&mut self) {
         match self.selected_row().and_then(|r| r.pr.clone()) {
             Some(pr) if !pr.url.is_empty() => {

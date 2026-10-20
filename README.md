@@ -26,7 +26,7 @@ and its git status. Worktrees that need you sort to the top.
 ▌    1309 ✓  5
 ──────────────────────────────────────
  ↵ open  ⇥ info  n new  d del
- c claude  o PR  y copy  / find
+ o PR  y copy  / find
  q hide
 ```
 
@@ -121,7 +121,6 @@ already has its own `[ui]` section the action stops and prints the snippet to me
 | `Tab` / `Space` | Expand details |
 | `n` | New worktree from the remote default branch (`herdr worktree create`) |
 | `d` | Remove the checkout, after `y` to confirm (never the main checkout; never forced) |
-| `c` | Open the worktree and start `claude` in a new split |
 | `o` | Open the PR in the browser |
 | `y` | Copy the checkout path (OSC 52) |
 | `/` | Filter by branch (fuzzy); `Esc` clears |
