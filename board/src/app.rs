@@ -305,10 +305,9 @@ impl App {
 
     pub fn open_selected(&mut self) {
         let Some(r) = self.selected_row() else { return };
-        let (ws, path, branch) = (self.ws.clone(), r.path.clone(), r.branch.clone());
+        let (root, path, branch) = (self.root.clone(), r.path.clone(), r.branch.clone());
         self.background(move || {
-            herdr(&["worktree", "open", "--workspace", &ws, "--path", &path, "--focus"])
-                .map(|_| format!("opened {branch}"))
+            herdr(&["worktree", "open", "--cwd", &root, "--path", &path, "--focus"]).map(|_| format!("opened {branch}"))
         });
     }
 
