@@ -46,19 +46,15 @@ fn setup() -> (App, Receiver<Msg>) {
     let src = data::herdr_json(&["worktree", "list", "--workspace", &ws]);
     let field = |k: &str| src.as_ref().and_then(|v| v["result"]["source"][k].as_str()).unwrap_or_default().to_string();
     let (repo, root) = (field("repo_name"), field("repo_root"));
-    let remotes = data::run("git", &["-C", &root, "remote"]).unwrap_or_default();
-    let base = remotes
-        .lines()
-        .find_map(|r| {
-            data::run("git", &["-C", &root, "symbolic-ref", "-q", "--short", &format!("refs/remotes/{r}/HEAD")])
+    let remote = data::remote_forge(&root);
+    let base = remote
+        .as_ref()
+        .and_then(|(name, _)| {
+            data::run("git", &["-C", &root, "symbolic-ref", "-q", "--short", &format!("refs/remotes/{name}/HEAD")])
         })
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "main".into());
-    let url = base
-        .split_once('/')
-        .and_then(|(remote, _)| data::run("git", &["-C", &root, "remote", "get-url", remote]))
-        .unwrap_or_default();
-    let forge = data::forge(url.trim());
+    let forge = remote.map(|(_, forge)| forge);
 
     let (tx, rx) = mpsc::channel();
     let paths = Arc::new(Mutex::new(Vec::new()));
@@ -258,13 +254,8 @@ fn status(state: Option<String>) -> std::io::Result<()> {
     let state = PathBuf::from(state.unwrap_or_else(|| env("HERDR_PLUGIN_STATE_DIR")));
     let Some(src) = data::herdr_json(&["worktree", "list", "--workspace", &ws]) else { return Ok(()) };
     let root = src["result"]["source"]["repo_root"].as_str().unwrap_or_default().to_string();
-    let url = data::run("git", &["-C", &root, "remote", "get-url", "origin"])
-        .or_else(|| {
-            let first = data::run("git", &["-C", &root, "remote"])?;
-            data::run("git", &["-C", &root, "remote", "get-url", first.lines().next()?])
-        })
-        .unwrap_or_default();
-    let prs: Vec<data::PrInfo> = data::forge(url.trim())
+    let prs: Vec<data::PrInfo> = data::remote_forge(&root)
+        .map(|(_, forge)| forge)
         .and_then(|forge| std::fs::read_to_string(state.join(data::cache_name(&forge))).ok())
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default();

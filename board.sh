@@ -32,33 +32,53 @@ declare -A GIT   # path -> "dirty ahead behind commit_epoch"
 sel_path=""
 tick=0
 
-# Resolve repo, compare base (<remote>/HEAD), and select GitHub or self-hosted GitLab once.
-init_repo() {
-  local json r url key
-  json=$("$H" worktree list --workspace "$WS" 2>/dev/null) || return 1
-  repo=$(jq -r '.result.source.repo_name' <<<"$json")
-  root=$(jq -r '.result.source.repo_root' <<<"$json")
-  for r in $(git -C "$root" remote 2>/dev/null); do
-    base=$(git -C "$root" symbolic-ref -q --short "refs/remotes/$r/HEAD") && break
-  done
-  [ -n "$base" ] || base=main
-  url=$(git -C "$root" remote get-url "${base%%/*}" 2>/dev/null || true)
+# Configure review provider from one parseable Git SSH or HTTP(S) remote URL.
+select_provider() {
+  local url=$1 key
   if [[ $url =~ github\.com[:/]([^/]+/[^/]+)$ ]]; then
     provider=github
     slug=${BASH_REMATCH[1]%.git}
     key="github-$slug"
   elif [[ $url =~ ^git@([^:]+):(.+)$ ]]; then
-    provider=gitlab
     host=${BASH_REMATCH[1]}
     project=${BASH_REMATCH[2]%.git}
+    [[ $project == */* ]] || return 1
+    provider=gitlab
     key="gitlab-$host-$project"
   elif [[ $url =~ ^https?://([^/]+)/(.+)$ ]]; then
-    provider=gitlab
     host=${BASH_REMATCH[1]}
     project=${BASH_REMATCH[2]%.git}
+    [[ $project == */* ]] || return 1
+    provider=gitlab
     key="gitlab-$host-$project"
+  else
+    return 1
   fi
-  [ -n "$provider" ] && cache="$STATE/reviews-$(printf '%s' "$key" | tr -c '[:alnum:]-' '_').json"
+  cache="$STATE/reviews-$(printf '%s' "$key" | tr -c '[:alnum:]-' '_').json"
+}
+
+# Resolve repo and choose reviews from parseable `origin`, else first parseable remote.
+init_repo() {
+  local json r url selected_remote=""
+  json=$("$H" worktree list --workspace "$WS" 2>/dev/null) || return 1
+  repo=$(jq -r '.result.source.repo_name' <<<"$json")
+  root=$(jq -r '.result.source.repo_root' <<<"$json")
+  url=$(git -C "$root" remote get-url origin 2>/dev/null || true)
+  if select_provider "$url"; then
+    selected_remote=origin
+  else
+    for r in $(git -C "$root" remote 2>/dev/null); do
+      url=$(git -C "$root" remote get-url "$r" 2>/dev/null || true)
+      if select_provider "$url"; then
+        selected_remote=$r
+        break
+      fi
+    done
+  fi
+  if [ -n "$selected_remote" ]; then
+    base=$(git -C "$root" symbolic-ref -q --short "refs/remotes/$selected_remote/HEAD" 2>/dev/null || true)
+  fi
+  [ -n "$base" ] || base=main
 }
 
 # Fetch reviews into the shared normalized cache. A failed request never replaces valid data.

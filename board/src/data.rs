@@ -254,6 +254,27 @@ pub fn forge(remote: &str) -> Option<Forge> {
     }
 }
 
+/// Choose the canonical review remote. `origin` wins whenever its URL identifies a supported
+/// forge; otherwise retain Git's remote order and use the first parseable URL.
+pub fn select_remote(remotes: &[(String, String)]) -> Option<(String, Forge)> {
+    remotes
+        .iter()
+        .find(|(name, url)| name == "origin" && forge(url).is_some())
+        .or_else(|| remotes.iter().find(|(_, url)| forge(url).is_some()))
+        .and_then(|(name, url)| forge(url).map(|forge| (name.clone(), forge)))
+}
+
+/// Read repository remotes once, then apply the canonical remote-selection rule shared by board
+/// startup and the statusbar command.
+pub fn remote_forge(root: &str) -> Option<(String, Forge)> {
+    let remotes = run("git", &["-C", root, "remote"])
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|name| run("git", &["-C", root, "remote", "get-url", name]).map(|url| (name.to_string(), url)))
+        .collect::<Vec<_>>();
+    select_remote(&remotes)
+}
+
 pub fn cache_name(forge: &Forge) -> String {
     let id = match forge {
         Forge::Github { slug } => format!("github-{slug}"),
@@ -453,7 +474,7 @@ pub fn spawn_gitlab_mr(
 
 #[cfg(test)]
 mod tests {
-    use super::{cache_name, forge, gitlab_ci, normalize_gitlab_mrs, parse_gitlab_mrs, Forge};
+    use super::{cache_name, forge, gitlab_ci, normalize_gitlab_mrs, parse_gitlab_mrs, select_remote, Forge};
 
     #[test]
     fn identifies_github_and_self_hosted_gitlab_remotes() {
@@ -467,6 +488,48 @@ mod tests {
             forge("https://gitlab.example.com/group/nested/repo.git"),
             Some(Forge::Gitlab { host: "gitlab.example.com".into(), project: "group/nested/repo".into() })
         );
+    }
+
+    #[test]
+    fn selects_parseable_origin_before_earlier_remotes() {
+        let remotes = vec![
+            ("github".into(), "git@github.com:mirror/repo.git".into()),
+            ("origin".into(), "git@gitlab.example.com:group/repo.git".into()),
+        ];
+        assert_eq!(
+            select_remote(&remotes),
+            Some(("origin".into(), Forge::Gitlab { host: "gitlab.example.com".into(), project: "group/repo".into() }))
+        );
+    }
+
+    #[test]
+    fn selects_github_when_it_is_the_only_parseable_remote() {
+        let remotes = vec![("origin".into(), "https://github.com/owner/repo.git".into())];
+        assert_eq!(select_remote(&remotes), Some(("origin".into(), Forge::Github { slug: "owner/repo".into() })));
+    }
+
+    #[test]
+    fn selects_first_parseable_remote_without_origin() {
+        let remotes = vec![
+            ("broken".into(), "not a remote URL".into()),
+            ("upstream".into(), "https://gitlab.example.com/group/repo.git".into()),
+        ];
+        assert_eq!(
+            select_remote(&remotes),
+            Some((
+                "upstream".into(),
+                Forge::Gitlab { host: "gitlab.example.com".into(), project: "group/repo".into() }
+            ))
+        );
+    }
+
+    #[test]
+    fn falls_back_when_origin_is_unparseable() {
+        let remotes = vec![
+            ("github".into(), "https://github.com/owner/repo.git".into()),
+            ("origin".into(), "not a remote URL".into()),
+        ];
+        assert_eq!(select_remote(&remotes), Some(("github".into(), Forge::Github { slug: "owner/repo".into() })));
     }
 
     #[test]
