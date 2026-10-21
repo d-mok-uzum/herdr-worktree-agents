@@ -45,6 +45,12 @@ select_provider() {
     [[ $project == */* ]] || return 1
     provider=gitlab
     key="gitlab-$host-$project"
+  elif [[ $url =~ ^ssh://([^/]+)/(.+)$ ]]; then
+    host=${BASH_REMATCH[1]##*@}
+    project=${BASH_REMATCH[2]%.git}
+    [[ $project == */* ]] || return 1
+    provider=gitlab
+    key="gitlab-$host-$project"
   elif [[ $url =~ ^https?://([^/]+)/(.+)$ ]]; then
     host=${BASH_REMATCH[1]}
     project=${BASH_REMATCH[2]%.git}

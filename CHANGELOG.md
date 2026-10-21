@@ -10,7 +10,8 @@ All notable changes to this plugin are documented here. The format follows
 
 - Review detection now prefers a parseable `origin` remote, falling back to the first parseable
   remote only when needed. This keeps GitLab MR cards and the tab-bar status cache correct when a
-  GitHub mirror sorts before the canonical GitLab `origin`.
+  GitHub mirror sorts before the canonical GitLab `origin`. The bash fallback also recognizes
+  `ssh://` Git remotes, matching the Rust board.
 - Worktree Agents now keeps one panel in every Git worktree workspace. Opening reserves and labels
   the new pane immediately, so overlapping hooks cannot create duplicate right splits in one workspace.
 - The `toggle` action is idempotent: it always shows the current workspace board rather than closing

@@ -162,9 +162,10 @@ cp config.env.example "$(herdr plugin config-dir minhtran.worktrees)/config.env"
 - The board (`board/`, Rust + ratatui) polls three sources on separate threads: herdr (worktrees and
   agent panes, every 1.5s), git (every `WORKTREES_GIT_EVERY`) and review data (every
   `WORKTREES_PR_TTL`). GitHub uses one `gh` GraphQL query for open PRs. GitLab derives its API root
-  from the remote, lists open MRs, then requests pipeline detail only for branches checked out locally.
-  For review detection, a parseable `origin` always wins; when `origin` is absent or unparseable, the
-  first parseable remote is used. The board and tab-bar status use this same rule. Both results use a
+  from Git SSH or HTTP(S) remotes, including `ssh://` URLs, lists open MRs, then requests pipeline
+  detail only for branches checked out locally. For review detection, a parseable `origin` always
+  wins; when `origin` is absent or unparseable, the first parseable remote is used. The board and
+  tab-bar status use this same rule. Both results use a
   provider-specific cache in the plugin state directory shared by every panel.
 - `wt-board --status` is the one-shot command behind the tab-bar entry. It reads the same cache, prints
   nothing while the active tab shows the panel, and publishes `$wt_pr` workspace tokens.

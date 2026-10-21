@@ -488,6 +488,10 @@ mod tests {
             forge("https://gitlab.example.com/group/nested/repo.git"),
             Some(Forge::Gitlab { host: "gitlab.example.com".into(), project: "group/nested/repo".into() })
         );
+        assert_eq!(
+            forge("ssh://git@gitlab.example.com/group/nested/repo.git"),
+            Some(Forge::Gitlab { host: "gitlab.example.com".into(), project: "group/nested/repo".into() })
+        );
     }
 
     #[test]
