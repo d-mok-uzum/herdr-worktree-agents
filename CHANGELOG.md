@@ -8,6 +8,7 @@ All notable changes to this plugin are documented here. The format follows
 
 ### Fixed
 
+- Moving selection now changes only card color; it no longer adds a frame that resizes and shifts cards.
 - Review detection now prefers a parseable `origin` remote, falling back to the first parseable
   remote only when needed. This keeps GitLab MR cards and the tab-bar status cache correct when a
   GitHub mirror sorts before the canonical GitLab `origin`. The bash fallback also recognizes

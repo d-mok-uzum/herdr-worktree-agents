@@ -39,9 +39,10 @@ and its git status. The origin checkout stays first; linked worktrees that need 
 | Last | Open PR/MR number, CI (`✓` / `✗N` failing checks / spinner running), unresolved review threads, `✔` approved or `±` changes requested, draft. GitLab rows currently omit review-thread and approval data. |
 
 `Tab` expands the selected card with the last commit subject, a diffstat bar, failing check names and
-the checkout path. Managed worktree paths omit everything before `.herdr/worktrees/`. The card's left bar and frame are red when an agent is waiting on you or CI failed,
-yellow while working, green when done. A card pulses when its agent starts waiting on you, and cards
-slide into place when the order changes.
+the checkout path. Managed worktree paths omit everything before `.herdr/worktrees/`. Selection uses only
+a dark background, so moving it never resizes or shifts cards. The card's left bar is red when an agent is
+waiting on you or CI failed, yellow while working, green when done. A card pulses when its agent starts
+waiting on you, and cards slide into place when the order changes.
 
 Agents are matched to the deepest worktree containing their working directory, so an agent in
 `.worktrees/feat` is not counted under the main checkout.

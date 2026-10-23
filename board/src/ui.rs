@@ -4,7 +4,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, Mode, Place, Row};
@@ -185,9 +185,6 @@ fn card(app: &App, r: &Row, w: u16, sel: bool, hover: bool) -> Vec<Line<'static>
     // Reserve one cell for `spread`'s gap, then continue the complete branch below if needed.
     let room = (w as usize).saturating_sub(5 + right.iter().map(Span::width).sum::<usize>());
     let mut branch_style = Style::new();
-    if sel {
-        branch_style = branch_style.add_modifier(Modifier::BOLD);
-    }
     if hover {
         branch_style = branch_style.add_modifier(Modifier::UNDERLINED);
     }
@@ -344,14 +341,13 @@ fn list(f: &mut Frame, app: &mut App, area: Rect) {
     let w = area.width;
     let rows = app.rows.clone();
     let hover = app.hover.clone();
-    // Target layout: selected card is framed (2 extra lines), others are separated by a gap.
+    // Selection changes color only, so moving it never shifts or resizes cards.
     let mut cards = Vec::new();
     let mut y = 0u16;
     for r in &rows {
         let sel = app.selected.as_deref() == Some(r.path.as_str());
-        let inner = if sel { w.saturating_sub(2) } else { w };
-        let lines = card(app, r, inner, sel, hover.as_deref() == Some(r.path.as_str()));
-        let h = lines.len() as u16 + if sel { 2 } else { 1 };
+        let lines = card(app, r, w, sel, hover.as_deref() == Some(r.path.as_str()));
+        let h = lines.len() as u16 + 1;
         cards.push((r.path.clone(), sel, lines, y, h));
         y += h;
     }
@@ -384,16 +380,9 @@ fn list(f: &mut Frame, app: &mut App, area: Rect) {
         let rect = Rect::new(area.x, vis_top as u16, w, (vis_bottom - vis_top) as u16);
         let skip = (vis_top - top) as u16;
         f.render_widget(Clear, rect);
-        let row = app.rows.iter().find(|r| r.path == path).cloned();
         let para = Paragraph::new(lines).scroll((skip, 0));
-        if sel {
-            let border = row.as_ref().map(|r| signal(app, r)).unwrap_or_default();
-            let border = if border.fg == Some(Color::DarkGray) { Style::new().fg(Color::Cyan) } else { border };
-            let block = Block::new().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(border);
-            f.render_widget(para.block(block), rect);
-        } else {
-            f.render_widget(para, rect);
-        }
+        let para = if sel { para.style(Style::new().bg(Color::DarkGray)) } else { para };
+        f.render_widget(para, rect);
         app.hits.push((rect, path));
     }
 }
@@ -566,6 +555,22 @@ mod tests {
             ),
             "qa-backend-tests/fix-wms-qacore-907-public-urls"
         );
+    }
+
+    #[test]
+    fn selection_uses_color_without_a_resizing_frame() {
+        let buf = render_buffer("feat", Vec::new(), 38);
+        let (y, line) = (0..buf.area.height)
+            .map(|y| {
+                let line: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+                (y, line)
+            })
+            .find(|(y, line)| *y >= 3 && line.contains("main"))
+            .expect("selected main row");
+        let x = line.find("main").expect("main branch") as u16;
+        assert_eq!(buf[(x, y)].bg, Color::DarkGray);
+        assert!(!line.contains('╭'));
+        assert!(!line.contains('╰'));
     }
 
     #[test]
