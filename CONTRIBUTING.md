@@ -20,7 +20,7 @@ scripts/launch.sh     pane entrypoint: loads config.env, runs the Rust board or 
 scripts/build.sh      install-time build; must exit 0 when cargo is missing
 scripts/statusbar.sh  adds or removes the tab-bar summary block in herdr's config.toml
 board/                Rust board (ratatui)
-  src/data.rs         background collectors: herdr, git, GitHub
+  src/data.rs         background collectors: herdr, git, GitHub and GitLab review data
   src/app.rs          state, row ranking, selection, animations, actions
   src/ui.rs           rendering
   src/main.rs         event loop, keys, mouse, persisted panel-width sync, --status and --snapshot modes

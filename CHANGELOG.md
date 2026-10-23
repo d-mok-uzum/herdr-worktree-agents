@@ -6,6 +6,10 @@ All notable changes to this plugin are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- GitHub and GitLab review refreshes now share one internal worker for cache staleness, locking, replacement, cached publishing, and manual refreshes. Failed requests retain the prior cache.
+
 ### Fixed
 
 - Moving selection now uses Herdr's Tokyo Night Day selection blue rather than bright white; it never adds a frame that resizes and shifts cards.

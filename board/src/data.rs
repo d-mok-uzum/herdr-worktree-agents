@@ -1,5 +1,5 @@
-//! Background collectors. Each worker owns one data source and one refresh cadence,
-//! so a slow `gh` call never delays agent-state updates.
+//! Background collectors. Each worker owns one data source and refresh cadence, so a slow
+//! review request never delays agent-state updates.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -357,69 +357,130 @@ fn worktree_branches(root: &str) -> HashSet<String> {
         .collect()
 }
 
-fn mtime(p: &Path) -> Option<i64> {
-    std::fs::metadata(p)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|t| t.as_secs() as i64)
-}
+mod review_worker {
+    use super::*;
 
-fn stale(cache: &Path, ttl: i64) -> bool {
-    mtime(cache).map(|at| now() - at >= ttl).unwrap_or(true)
-}
-
-/// A short-lived sidecar lock makes panels share one refresh without touching a valid cache.
-fn claim_refresh(cache: &Path) -> Option<PathBuf> {
-    let lock = cache.with_extension("lock");
-    if mtime(&lock).is_some_and(|at| now() - at < 30) {
-        return None;
+    pub(super) trait Provider: Send + 'static {
+        /// Returns normalized `PrInfo` JSON. A failure leaves the current cache untouched.
+        fn fetch(&self) -> Option<String>;
     }
-    let _ = std::fs::remove_file(&lock);
-    std::fs::OpenOptions::new().write(true).create_new(true).open(&lock).ok()?;
-    Some(lock)
-}
 
-fn replace_cache(cache: &Path, body: &str) {
-    let tmp = cache.with_extension(format!("tmp.{}", std::process::id()));
-    if std::fs::write(&tmp, body).is_ok() {
-        let _ = std::fs::rename(tmp, cache);
+    fn mtime(path: &Path) -> Option<i64> {
+        std::fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|time| time.as_secs() as i64)
+    }
+
+    fn stale(cache: &Path, ttl: i64) -> bool {
+        mtime(cache).map(|at| now() - at >= ttl).unwrap_or(true)
+    }
+
+    /// A short-lived sidecar lock makes panels share one refresh without touching a valid cache.
+    fn claim_refresh(cache: &Path) -> Option<PathBuf> {
+        let lock = cache.with_extension("lock");
+        if mtime(&lock).is_some_and(|at| now() - at < 30) {
+            return None;
+        }
+        let _ = std::fs::remove_file(&lock);
+        std::fs::OpenOptions::new().write(true).create_new(true).open(&lock).ok()?;
+        Some(lock)
+    }
+
+    fn replace_cache(cache: &Path, body: &str) {
+        let tmp = cache.with_extension(format!("tmp.{}", std::process::id()));
+        if std::fs::write(&tmp, body).is_ok() {
+            let _ = std::fs::rename(tmp, cache);
+        }
+    }
+
+    fn cached_prs(cache: &Path) -> Vec<PrInfo> {
+        std::fs::read_to_string(cache).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
+    }
+
+    pub(super) fn refresh_if_stale(provider: &impl Provider, cache: &Path, ttl: i64) {
+        if !stale(cache, ttl) {
+            return;
+        }
+        let Some(lock) = claim_refresh(cache) else {
+            return;
+        };
+        if let Some(body) = provider.fetch() {
+            replace_cache(cache, &body);
+        }
+        let _ = std::fs::remove_file(lock);
+    }
+
+    pub(super) fn spawn<P: Provider>(provider: P, cache: PathBuf, tx: Sender<Msg>, kick: Receiver<()>) {
+        let ttl = env_secs("WORKTREES_PR_TTL", 60) as i64;
+        std::thread::spawn(move || loop {
+            refresh_if_stale(&provider, &cache, ttl);
+            if tx.send(Msg::Pr(cached_prs(&cache), mtime(&cache).unwrap_or(0))).is_err() {
+                return;
+            }
+            let _ = kick.recv_timeout(Duration::from_secs(5));
+        });
     }
 }
 
-fn cached_prs(cache: &Path) -> Vec<PrInfo> {
-    std::fs::read_to_string(cache).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+struct GithubProvider {
+    slug: String,
+    gh: String,
+}
+
+impl review_worker::Provider for GithubProvider {
+    fn fetch(&self) -> Option<String> {
+        let (owner, name) = self.slug.split_once('/').unwrap_or_default();
+        let args = [
+            "api",
+            "graphql",
+            "-F",
+            &format!("owner={owner}"),
+            "-F",
+            &format!("name={name}"),
+            "-f",
+            &format!("query={PR_QUERY}"),
+            "--jq",
+            PR_JQ,
+        ];
+        run(&self.gh, &args)
+    }
+}
+
+struct GitlabProvider {
+    api_base: String,
+    project: String,
+    token: String,
+    root: String,
+}
+
+impl review_worker::Provider for GitlabProvider {
+    fn fetch(&self) -> Option<String> {
+        let project_url = url_encode(&self.project);
+        let endpoint = format!(
+            "{}/projects/{project_url}/merge_requests?state=opened&scope=all&per_page=100",
+            self.api_base.trim_end_matches('/')
+        );
+        let mut mrs = parse_gitlab_mrs(&gitlab_request(&endpoint, &self.token)?)?;
+        let branches = worktree_branches(&self.root);
+        for mr in &mut mrs {
+            if branches.contains(&mr.source_branch) {
+                let detail =
+                    format!("{}/projects/{project_url}/merge_requests/{}", self.api_base.trim_end_matches('/'), mr.iid);
+                if let Some(json) = gitlab_request(&detail, &self.token) {
+                    if let Ok(detail) = serde_json::from_str::<GitlabMr>(&json) {
+                        mr.head_pipeline = detail.head_pipeline;
+                    }
+                }
+            }
+        }
+        serde_json::to_string(&normalize_gitlab_mrs(mrs)).ok()
+    }
 }
 
 pub fn spawn_github_pr(slug: String, cache: PathBuf, gh: String, tx: Sender<Msg>, kick: Receiver<()>) {
-    let ttl = env_secs("WORKTREES_PR_TTL", 60) as i64;
-    std::thread::spawn(move || loop {
-        if stale(&cache, ttl) {
-            if let Some(lock) = claim_refresh(&cache) {
-                let (owner, name) = slug.split_once('/').unwrap_or_default();
-                let args = [
-                    "api",
-                    "graphql",
-                    "-F",
-                    &format!("owner={owner}"),
-                    "-F",
-                    &format!("name={name}"),
-                    "-f",
-                    &format!("query={PR_QUERY}"),
-                    "--jq",
-                    PR_JQ,
-                ];
-                if let Some(out) = run(&gh, &args) {
-                    replace_cache(&cache, &out);
-                }
-                let _ = std::fs::remove_file(lock);
-            }
-        }
-        if tx.send(Msg::Pr(cached_prs(&cache), mtime(&cache).unwrap_or(0))).is_err() {
-            return;
-        }
-        let _ = kick.recv_timeout(Duration::from_secs(5));
-    });
+    review_worker::spawn(GithubProvider { slug, gh }, cache, tx, kick);
 }
 
 pub fn spawn_gitlab_mr(
@@ -431,50 +492,22 @@ pub fn spawn_gitlab_mr(
     tx: Sender<Msg>,
     kick: Receiver<()>,
 ) {
-    let ttl = env_secs("WORKTREES_PR_TTL", 60) as i64;
-    std::thread::spawn(move || loop {
-        if stale(&cache, ttl) {
-            if let Some(lock) = claim_refresh(&cache) {
-                let project_url = url_encode(&project);
-                let endpoint = format!(
-                    "{}/projects/{project_url}/merge_requests?state=opened&scope=all&per_page=100",
-                    api_base.trim_end_matches('/')
-                );
-                if let Some(out) = gitlab_request(&endpoint, &token) {
-                    if let Some(mut mrs) = parse_gitlab_mrs(&out) {
-                        let branches = worktree_branches(&root);
-                        for mr in &mut mrs {
-                            if branches.contains(&mr.source_branch) {
-                                let detail = format!(
-                                    "{}/projects/{project_url}/merge_requests/{}",
-                                    api_base.trim_end_matches('/'),
-                                    mr.iid
-                                );
-                                if let Some(json) = gitlab_request(&detail, &token) {
-                                    if let Ok(detail) = serde_json::from_str::<GitlabMr>(&json) {
-                                        mr.head_pipeline = detail.head_pipeline;
-                                    }
-                                }
-                            }
-                        }
-                        if let Ok(normalized) = serde_json::to_string(&normalize_gitlab_mrs(mrs)) {
-                            replace_cache(&cache, &normalized);
-                        }
-                    }
-                }
-                let _ = std::fs::remove_file(lock);
-            }
-        }
-        if tx.send(Msg::Pr(cached_prs(&cache), mtime(&cache).unwrap_or(0))).is_err() {
-            return;
-        }
-        let _ = kick.recv_timeout(Duration::from_secs(5));
-    });
+    review_worker::spawn(GitlabProvider { api_base, project, token, root }, cache, tx, kick);
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{cache_name, forge, gitlab_ci, normalize_gitlab_mrs, parse_gitlab_mrs, select_remote, Forge};
+    use super::{
+        cache_name, forge, gitlab_ci, normalize_gitlab_mrs, parse_gitlab_mrs, review_worker, select_remote, Forge,
+    };
+
+    struct FailedProvider;
+
+    impl review_worker::Provider for FailedProvider {
+        fn fetch(&self) -> Option<String> {
+            None
+        }
+    }
 
     #[test]
     fn identifies_github_and_self_hosted_gitlab_remotes() {
@@ -534,6 +567,21 @@ mod tests {
             ("origin".into(), "not a remote URL".into()),
         ];
         assert_eq!(select_remote(&remotes), Some(("github".into(), Forge::Github { slug: "owner/repo".into() })));
+    }
+
+    #[test]
+    fn failed_refresh_keeps_cache_and_removes_lock() {
+        let dir = std::env::temp_dir().join(format!("wt-board-review-test-{}-{}", std::process::id(), super::now()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cache = dir.join("reviews.json");
+        let original = r#"[{"b":"old","n":1}]"#;
+        std::fs::write(&cache, original).unwrap();
+
+        review_worker::refresh_if_stale(&FailedProvider, &cache, 0);
+
+        assert_eq!(std::fs::read_to_string(&cache).unwrap(), original);
+        assert!(!cache.with_extension("lock").exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
