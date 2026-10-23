@@ -22,7 +22,7 @@ command = ["sh", "-c", "exec sh \"$HERDR_PLUGIN_ROOT/scripts/launch.sh\""]
 [[actions]]
 id = "toggle"
 title = "Worktrees: show panel"
-description = "Show one panel in the current worktree workspace."
+description = "Show a panel in every Git workspace."
 contexts = ["workspace", "pane"]
 command = ["bash", "panel.sh", "toggle"]
 

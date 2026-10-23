@@ -131,7 +131,7 @@ already has its own `[ui]` section the action stops and prints the snippet to me
 | `r` | Refresh now |
 | `q` | Hide the panel everywhere and stop auto-opening |
 
-The `toggle` action is idempotent: it enables and shows the current workspace's board, even in a single-checkout repo. From a non-Git workspace, it reveals an already-open board or reopens the last worktree board. Use `q` in a board to hide every board and disable auto-open.
+The `toggle` action is idempotent: it enables and shows a board in every Git workspace, including single-checkout repos. It does not move focus when invoked from a non-Git workspace. Use `q` in a board to hide every board and disable auto-open.
 
 ## Configuration
 
@@ -144,7 +144,7 @@ cp config.env.example "$(herdr plugin config-dir minhtran.worktrees)/config.env"
 | Setting | Default | Meaning |
 |---|---|---|
 | `WORKTREES_WIDTH` | `38` | Initial panel width in columns; a manual resize is saved and synchronized to every board |
-| `WORKTREES_MIN` | `2` | Auto-open only in repos with at least this many checkouts |
+| `WORKTREES_MIN` | `2` | Auto-open only in repos with at least this many checkouts; global toggle always opens every Git workspace |
 | `WORKTREES_PR_TTL` | `60` | Seconds between PR/CI refreshes |
 | `WORKTREES_GIT_EVERY` | `10` | Seconds between git scans |
 | `WORKTREES_GH` | `/usr/bin/gh`, else `gh` | GitHub CLI to use |
@@ -187,10 +187,10 @@ Remove the keybinding from `config.toml` if you added one.
 ## Troubleshooting
 
 - Hook and action output: `herdr plugin log list --plugin minhtran.worktrees`
-- The panel never opens: the repo needs `WORKTREES_MIN` checkouts, or you hid it with `q`. Run the
-  toggle action to re-enable it.
+- The panel does not auto-open: the repo needs `WORKTREES_MIN` checkouts, or you hid it with `q`.
+  Run the toggle action to re-enable and show panels in every Git workspace.
 - A panel still runs old code after a Rust update: press `q` in any board to close all boards, then
-  focus each worktree workspace (or invoke the toggle action there) to open fresh boards. After
+  invoke the toggle action to open fresh boards everywhere. After
   `herdr plugin unlink` + `link`, close any stale panes the same way before reopening them.
 - PR/MR line always empty: for GitHub, check `gh auth status` or `WORKTREES_GH`; for GitLab, set
   `GITLAB_TOKEN` in the plugin `config.env`, then press `q` and reopen the board. GitLab supports MR,

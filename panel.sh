@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: panel.sh toggle | ensure | off
-#   toggle  re-enable and show the active worktree workspace's panel
+#   toggle  re-enable and show panels in every Git workspace
 #   ensure  (startup / workspace.focused / worktree.created hooks) auto-open in the active
 #           worktree workspace when its repo has >= WORKTREES_MIN checkouts and the panel is missing
 #   off     hide everywhere (the board's `q` key)
@@ -13,8 +13,6 @@ H=${HERDR_BIN_PATH:-herdr}
 PLUGIN=${HERDR_PLUGIN_ID:-minhtran.worktrees}
 STATE=${HERDR_PLUGIN_STATE_DIR:?run from herdr}
 OFF=$STATE/disabled
-LAST=$STATE/last-workspace
-LEGACY_LAST=$STATE/last-source
 LABEL="⎇ worktrees"
 WIDTH_FILE=$STATE/width
 SUPPRESS_FILE=$STATE/width-suppress-until
@@ -75,7 +73,6 @@ open_in_tab() {
   new_id=$("$H" plugin pane open --plugin "$PLUGIN" --entrypoint board --placement split \
     --target-pane "$target" --direction right --no-focus | jq -r '.result.plugin_pane.pane.pane_id')
   printf '%s\n' "$new_id" > "$(board_file "$ws")"
-  printf '%s\n' "$ws" > "$LAST"
   "$H" pane rename "$new_id" "$LABEL" >/dev/null 2>&1 || true
   fit_width "$new_id"
 }
@@ -106,15 +103,27 @@ close_all() {
   rm -f "$STATE"/board-*
 }
 
-# $1 = force: skip the worktree-count check (explicit toggle on).
-ensure() {
-  local force=${1:-} ws tab
-  [ -f "$OFF" ] && return 0
-  read -r ws tab < <(active) || return 0
+# $3 = force: skip the worktree-count check (explicit global show).
+ensure_workspace() {
+  local ws=$1 tab=$2 force=${3:-}
   source_workspace "$ws" >/dev/null || return 0
   workspace_board_open "$ws" "$tab" && return 0
   [ -n "$force" ] || has_worktrees "$ws" || return 0
   open_in_tab "$tab" "$ws"
+}
+
+ensure() {
+  local ws tab
+  [ -f "$OFF" ] && return 0
+  read -r ws tab < <(active) || return 0
+  ensure_workspace "$ws" "$tab"
+}
+
+show_all() {
+  "$H" workspace list | jq -r '.result.workspaces[] | select(.active_tab_id != null) | "\(.workspace_id) \(.active_tab_id)"' |
+    while read -r ws tab; do
+      ensure_workspace "$ws" "$tab" force
+    done
 }
 
 # Rapid workspace switches fire overlapping hooks; serialize them. macOS has no flock(1):
@@ -148,20 +157,9 @@ case ${1:-} in
     printf '%s\n' "$(( $(date +%s) + 2 ))" > "$COOLDOWN_FILE"
     sync_board_widths ;;
   toggle)
-    # This action is intentionally idempotent: `q` hides boards; `/worktrees` shows this workspace's board.
-    read -r ws _ < <(active) || exit 0
-    if ! source_workspace "$ws" >/dev/null; then
-      # `/worktrees` may run from a non-Git agent workspace; reveal or reopen the last worktree board.
-      board_ws=$(board_panes | awk 'NR == 1 { print $3 }')
-      [ -n "$board_ws" ] || { [ -r "$LAST" ] && IFS= read -r board_ws < "$LAST" || true; }
-      [ -n "${board_ws:-}" ] || { [ -r "$LEGACY_LAST" ] && IFS= read -r board_ws < "$LEGACY_LAST" || true; }
-      [ -n "${board_ws:-}" ] || exit 0
-      "$H" workspace focus "$board_ws" >/dev/null
-      if [ -z "$(board_panes)" ]; then rm -f "$OFF"; ensure force; fi
-      exit 0
-    fi
+    # `q` hides every board; this action re-enables and shows every Git workspace board.
     rm -f "$OFF"
-    ensure force ;;
+    show_all ;;
   ensure) ensure ;;
   off) touch "$OFF"; close_all ;;
   *) echo "usage: panel.sh width <columns>|toggle|ensure|off" >&2; exit 2 ;;

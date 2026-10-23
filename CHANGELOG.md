@@ -15,9 +15,9 @@ All notable changes to this plugin are documented here. The format follows
   `ssh://` Git remotes, matching the Rust board.
 - Worktree Agents now keeps one panel in every Git worktree workspace. Opening reserves and labels
   the new pane immediately, so overlapping hooks cannot create duplicate right splits in one workspace.
-- The `toggle` action is idempotent: it always shows the current workspace board rather than closing
-  one opened by another invocation; from a non-Git workspace it reveals or reopens the last board.
-  Use `q` in the board to hide all boards.
+- The `toggle` action now re-enables and shows panels in every Git workspace, including
+  single-checkout repos. It no longer focuses an arbitrary workspace when invoked globally; `q`
+  still hides all boards.
 - Long branch names wrap inside their card instead of truncating at the border.
 - A manual panel resize is now saved and synchronized to every open worktree board; `WORKTREES_WIDTH`
   remains the initial width.
