@@ -381,7 +381,7 @@ fn list(f: &mut Frame, app: &mut App, area: Rect) {
         let skip = (vis_top - top) as u16;
         f.render_widget(Clear, rect);
         let para = Paragraph::new(lines).scroll((skip, 0));
-        let para = if sel { para.style(Style::new().bg(Color::DarkGray)) } else { para };
+        let para = if sel { para.style(Style::new().bg(Color::Gray)) } else { para };
         f.render_widget(para, rect);
         app.hits.push((rect, path));
     }
@@ -568,7 +568,7 @@ mod tests {
             .find(|(y, line)| *y >= 3 && line.contains("main"))
             .expect("selected main row");
         let x = line.find("main").expect("main branch") as u16;
-        assert_eq!(buf[(x, y)].bg, Color::DarkGray);
+        assert_eq!(buf[(x, y)].bg, Color::Gray);
         assert!(!line.contains('╭'));
         assert!(!line.contains('╰'));
     }
