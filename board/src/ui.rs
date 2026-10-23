@@ -11,6 +11,8 @@ use crate::app::{App, Mode, Place, Row};
 use crate::data::now;
 
 const SPIN: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+/// Herdr's Tokyo Night Day selection background; darker than white while preserving text contrast.
+const SELECTION_BG: Color = Color::Rgb(183, 193, 227);
 
 struct Icons {
     repo: &'static str,
@@ -381,7 +383,7 @@ fn list(f: &mut Frame, app: &mut App, area: Rect) {
         let skip = (vis_top - top) as u16;
         f.render_widget(Clear, rect);
         let para = Paragraph::new(lines).scroll((skip, 0));
-        let para = if sel { para.style(Style::new().bg(Color::White)) } else { para };
+        let para = if sel { para.style(Style::new().bg(SELECTION_BG)) } else { para };
         f.render_widget(para, rect);
         app.hits.push((rect, path));
     }
@@ -568,7 +570,7 @@ mod tests {
             .find(|(y, line)| *y >= 3 && line.contains("main"))
             .expect("selected main row");
         let x = line.find("main").expect("main branch") as u16;
-        assert_eq!(buf[(x, y)].bg, Color::White);
+        assert_eq!(buf[(x, y)].bg, super::SELECTION_BG);
         assert!(!line.contains('╭'));
         assert!(!line.contains('╰'));
     }
